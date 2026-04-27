@@ -1,0 +1,7 @@
+name = "daily-summary"
+main = "index.js"
+compatibility_date = "2024-04-01"
+
+[[d1_databases]]
+binding = "DB"
+database_id = "b6275cb4-9c0f-4649-ae6a-f1c2e70e940f"

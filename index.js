@@ -1,0 +1,107 @@
+var __defProp = Object.defineProperty;
+var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
+
+// index.js
+var SLACK_API = "https://slack.com/api/chat.postMessage";
+var ASGARD = "https://asgard.pgallivan.workers.dev";
+var COMMS = "https://comms-hub.pgallivan.workers.dev";
+var CHANNEL = "C0ATZ5RM4SY";
+var index_default = {
+  async fetch(request, env) {
+    const url = new URL(request.url);
+    if (url.pathname === "/health") return json({ ok: true, worker: "daily-summary" });
+    if (url.pathname === "/trigger") return json(await runDailySummary(env));
+    return json({ endpoints: ["/health", "/trigger"] });
+  },
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(runDailySummary(env));
+  }
+};
+async function runDailySummary(env) {
+  const melb = (/* @__PURE__ */ new Date()).toLocaleString("en-AU", { timeZone: "Australia/Melbourne", weekday: "long", day: "numeric", month: "long" });
+  const [stats, commsStats, tokenCheck] = await Promise.all([
+    fetch(`${ASGARD}/api/stats`, { signal: AbortSignal.timeout(5e3) }).then((r) => r.json()).catch(() => ({})),
+    fetch(`${COMMS}/api/stats`, { signal: AbortSignal.timeout(5e3) }).then((r) => r.json()).catch(() => ({})),
+    fetch("https://token-guardian.pgallivan.workers.dev/check", { signal: AbortSignal.timeout(5e3) }).then((r) => r.json()).catch(() => ({}))
+  ]);
+  const live = stats.live || 0;
+  const total = stats.total || 0;
+  const workers = stats.cfCount || 0;
+  const rev1 = stats.totalRevY1 || 0;
+  const coreUp = stats.coreHealth?.up || 0;
+  const coreTotal = stats.coreHealth?.total || 8;
+  const unread = commsStats.unread || 0;
+  const tokenIssues = (tokenCheck.checks || []).filter((c) => c.status !== "OK");
+  const healthEmoji = coreUp === coreTotal ? "\u{1F7E2}" : coreUp >= coreTotal * 0.8 ? "\u{1F7E1}" : "\u{1F534}";
+  const revFmt = rev1 >= 1e3 ? `$${Math.round(rev1 / 1e3)}k` : `$${rev1}`;
+  let msg = `\u{1F3F0} *Asgard Daily \u2014 ${melb}*
+
+`;
+  msg += `${healthEmoji} *System Health*
+`;
+  msg += `\u2022 Core workers: ${coreUp}/${coreTotal} UP
+`;
+  msg += `\u2022 Live projects: ${live}/${total}
+`;
+  msg += `\u2022 CF workers deployed: ${workers}
+`;
+  msg += `\u2022 Y1 revenue target: ${revFmt}
+
+`;
+  if (tokenIssues.length > 0) {
+    msg += `\u26A0\uFE0F *Token Issues*
+`;
+    tokenIssues.forEach((t) => msg += `\u2022 ${t.name}: ${t.status}
+`);
+    msg += "\n";
+  } else {
+    msg += `\u{1F511} All tokens healthy (GitHub, Cloudflare, Anthropic, Vercel)
+
+`;
+  }
+  if (unread > 0) {
+    msg += `\u{1F4EC} *${unread} unread messages* in Comms Hub
+`;
+    msg += `\u2192 comms-hub.pgallivan.workers.dev
+
+`;
+  }
+  msg += `\u{1F916} *Asgard AI*: asgard-ai.pgallivan.workers.dev
+`;
+  msg += `\u2022 Paddy PIN: 1016 | Jacky PIN: 7007
+
+`;
+  msg += `_Have a great day! \u2014 Asgard \u{1F3F0}_`;
+  let slackOk = false;
+  if (env.SLACK_BOT_TOKEN) {
+    const r = await fetch(SLACK_API, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${env.SLACK_BOT_TOKEN}` },
+      body: JSON.stringify({ channel: CHANNEL, text: msg })
+    });
+    const d = await r.json();
+    slackOk = d.ok;
+  }
+  await fetch(`${COMMS}/api/messages`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source: "daily-summary",
+      category: "Infrastructure",
+      message: `\u{1F4C5} Daily summary: ${live}/${total} live, ${coreUp}/${coreTotal} core workers up, ${unread} unread msgs${tokenIssues.length ? `, ${tokenIssues.length} token issues` : ", all tokens healthy"}`,
+      type: "daily",
+      priority: tokenIssues.length > 0 ? "HIGH" : "LOW"
+    })
+  }).catch(() => {
+  });
+  return { ok: true, slackPosted: slackOk, stats: { live, total, workers, coreUp, coreTotal }, date: melb };
+}
+__name(runDailySummary, "runDailySummary");
+function json(d, s = 200) {
+  return new Response(JSON.stringify(d, null, 2), { status: s, headers: { "Content-Type": "application/json" } });
+}
+__name(json, "json");
+export {
+  index_default as default
+};
+//# sourceMappingURL=index.js.map
